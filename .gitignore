@@ -1,0 +1,14 @@
+# Rust
+/distributed-cache-rust/target/
+
+# IDE
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+.gigacode
+.qwen	
+
