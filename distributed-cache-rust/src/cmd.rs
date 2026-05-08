@@ -1,7 +1,7 @@
 use crate::resp::parser::RespValue;
 use crate::store::Store;
 
-/// Разобранный Redis-команды, готовой к выполнению.
+/// Разобранная Redis-команда, готовая к выполнению.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     Ping(Option<Vec<u8>>),
@@ -14,6 +14,16 @@ pub enum Command {
     Get(Vec<u8>),
     Del(Vec<Vec<u8>>),
     Exists(Vec<Vec<u8>>),
+    /// Сохранить RDB-снимок на диск (BGSAVE).
+    Bgsave,
+}
+
+impl Command {
+    /// Возвращает `true`, если команда изменяет данные (SET, DEL).
+    /// Используется для AOF-логирования.
+    pub fn is_modifying(&self) -> bool {
+        matches!(self, Command::Set { .. } | Command::Del(_))
+    }
 }
 
 /// Попытка преобразовать массив RESP в `Command`.
@@ -140,6 +150,15 @@ pub fn parse_command(args: &[RespValue]) -> Result<Command, RespValue> {
             Ok(Command::Exists(keys))
         }
 
+        "BGSAVE" => {
+            if args.len() > 1 {
+                return Err(RespValue::Error(
+                    "ERR BGSAVE does not accept arguments".into(),
+                ));
+            }
+            Ok(Command::Bgsave)
+        }
+
         _ => Err(RespValue::Error(format!(
             "ERR unknown command '{}'",
             name
@@ -164,6 +183,11 @@ pub fn execute_command(cmd: &Command, store: &Store) -> Vec<u8> {
         Command::Exists(keys) => {
             let refs: Vec<&[u8]> = keys.iter().map(|k| k.as_slice()).collect();
             store.exists(&refs)
+        }
+        Command::Bgsave => {
+            // Обработка BGSAVE выполняется на уровне handle_connection,
+            // где доступен Persistence. Здесь — заглушка.
+            b"+OK\r\n".to_vec()
         }
     }
 }
@@ -282,6 +306,18 @@ mod tests {
     #[test]
     fn parse_set_missing_args() {
         let result = parse_command(&[bs(b"SET")]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_bgsave() {
+        let cmd = parse_command(&[bs(b"BGSAVE")]).unwrap();
+        assert_eq!(cmd, Command::Bgsave);
+    }
+
+    #[test]
+    fn parse_bgsave_with_args_fails() {
+        let result = parse_command(&[bs(b"BGSAVE"), bs(b"extra")]);
         assert!(result.is_err());
     }
 

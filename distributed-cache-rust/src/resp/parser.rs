@@ -216,6 +216,26 @@ fn parse_array(input: &[u8]) -> IResult<&[u8], RespValue> {
 mod tests {
     use super::*;
 
+    // ---- Nom 8: проверка поведения alt -------------------------------------
+
+    #[test]
+    fn nom8_alt_parses_array_correctly() {
+        // На всякий случай убедимся, что nom 8 правильно выбирает parse_array
+        // для входа, начинающегося с '*'.
+        let input = b"*3\r\n$3\r\nSET\r\n$2\r\nk1\r\n$5\r\nhello\r\n";
+        let (rem, val) = parse_frame(input).unwrap();
+        assert!(rem.is_empty(), "остаток непустой: {:?}", rem);
+        match &val {
+            RespValue::Array(Some(items)) => {
+                assert_eq!(items.len(), 3);
+                assert_eq!(items[0], RespValue::BulkString(Some(b"SET".to_vec())));
+                assert_eq!(items[1], RespValue::BulkString(Some(b"k1".to_vec())));
+                assert_eq!(items[2], RespValue::BulkString(Some(b"hello".to_vec())));
+            }
+            other => panic!("ожидался Array, получен {:?}", other),
+        }
+    }
+
     // ---- SimpleString -----------------------------------------------------
 
     #[test]

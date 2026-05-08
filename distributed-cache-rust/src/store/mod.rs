@@ -307,6 +307,30 @@ impl Store {
         removed
     }
 
+    /// Возвращает все записи для сохранения в RDB-снимок.
+    /// Уже истёкшие ключи пропускаются.
+    /// Возвращаемый кортеж: (ключ, значение, оставшееся TTL в секундах).
+    pub fn snapshot_entries(&self) -> Vec<(Vec<u8>, Vec<u8>, Option<u64>)> {
+        let now = Instant::now();
+        self.inner
+            .iter()
+            .filter_map(|entry| {
+                let ttl_remaining = entry.expires_at.and_then(|exp| {
+                    if exp > now {
+                        Some(exp.duration_since(now).as_secs())
+                    } else {
+                        Some(0)
+                    }
+                });
+                // Пропускаем уже истёкшие ключи.
+                if ttl_remaining == Some(0) {
+                    return None;
+                }
+                Some((entry.key().clone(), entry.data.clone(), ttl_remaining))
+            })
+            .collect()
+    }
+
     /// Внутренний помощник: количество записей (для тестирования).
     #[cfg(test)]
     pub fn len(&self) -> usize {
