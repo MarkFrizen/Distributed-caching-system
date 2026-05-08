@@ -107,9 +107,10 @@ async fn main() {
         .with_max_level(tracing::Level::INFO)
         .init();
 
-    let bind_addr = "127.0.0.1:8080";
+    // Адрес привязки: из переменной окружения CACHE_BIND или по умолчанию 127.0.0.1:8080.
+    let bind_addr = std::env::var("CACHE_BIND").unwrap_or_else(|_| "127.0.0.1:8080".into());
 
-    let listener = TcpListener::bind(bind_addr)
+    let listener = TcpListener::bind(&bind_addr)
         .await
         .unwrap_or_else(|e| panic!("Не удалось привязаться к {}: {}", bind_addr, e));
 

@@ -1,0 +1,145 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+
+jobs:
+  # --------------------------------------------------------------------------
+  # Тестирование
+  # --------------------------------------------------------------------------
+  test:
+    name: test (cargo test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./distributed-cache-rust
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Установить Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Кэширование зависимостей
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: distributed-cache-rust
+
+      - name: Сборка (без тестов)
+        run: cargo build --verbose
+
+      - name: Запуск тестов
+        run: cargo test --verbose
+
+  # --------------------------------------------------------------------------
+  # Линтинг
+  # --------------------------------------------------------------------------
+  lint:
+    name: lint (clippy + fmt)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./distributed-cache-rust
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Установить Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Кэширование зависимостей
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: distributed-cache-rust
+
+      - name: Clippy
+        run: cargo clippy -- -D warnings
+
+      - name: Format check
+        run: cargo fmt --check
+
+  # --------------------------------------------------------------------------
+  # Аудит безопасности зависимостей
+  # --------------------------------------------------------------------------
+  audit:
+    name: audit (cargo audit)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./distributed-cache-rust
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Установить Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Установить cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Проверка уязвимостей
+        run: cargo audit
+
+  # --------------------------------------------------------------------------
+  # Сборка Docker-образа и проверка, что сервер стартует
+  # --------------------------------------------------------------------------
+  build-docker:
+    name: build-docker
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Сборка Docker-образа
+        uses: docker/build-push-action@v6
+        with:
+          context: ./distributed-cache-rust
+          file: ./distributed-cache-rust/Dockerfile
+          load: true
+          tags: distributed-cache-rust:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Запуск контейнера и проверка HEALTHCHECK
+        run: |
+          docker run -d --name cache-ci \
+            -e CACHE_BIND=0.0.0.0:8080 \
+            -p 8080:8080 \
+            distributed-cache-rust:ci
+
+          # Ждём, пока контейнер поднимется
+          sleep 5
+
+          # Проверяем, что PING работает через RESP2
+          RESP=$(printf '*1\r\n$4\r\nPING\r\n' | timeout 5 nc -w 3 127.0.0.1 8080)
+          if [ "$RESP" != "+PONG" ]; then
+            echo "PING test failed. Got: $RESP"
+            docker logs cache-ci
+            docker stop cache-ci && docker rm cache-ci
+            exit 1
+          fi
+
+          # Проверяем SET/GET
+          printf '*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n' | timeout 5 nc -w 3 127.0.0.1 8080
+          GET_RESP=$(printf '*2\r\n$3\r\nGET\r\n$3\r\nfoo\r\n' | timeout 5 nc -w 3 127.0.0.1 8080)
+          if [ "$GET_RESP" != '$3' ] || ! echo "$GET_RESP" | grep -q 'bar'; then
+            echo "SET/GET test failed. GET response: $GET_RESP"
+            docker logs cache-ci
+            docker stop cache-ci && docker rm cache-ci
+            exit 1
+          fi
+
+          echo "=== Docker smoke test PASSED ==="
+          docker stop cache-ci && docker rm cache-ci

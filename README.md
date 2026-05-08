@@ -87,10 +87,82 @@ redis-cli -p 8080 PING
 - `snapshot_interval_secs` — интервал фоновых снимков (0 = отключено)
 - `aof_enabled` — включение AOF
 
+## Контейнеризация (Этап 6)
+
+### Docker
+
+Сборка образа и запуск одного узла:
+
+```bash
+cd distributed-cache-rust
+docker build -t distributed-cache-rust .
+docker run -d --name cache-node \
+  -e CACHE_BIND=0.0.0.0:8080 \
+  -p 8080:8080 \
+  distributed-cache-rust
+```
+
+Проверка через netcat:
+
+```bash
+printf '*1\r\n$4\r\nPING\r\n' | nc -w 3 localhost 8080
+# Ожидаемый ответ: +PONG
+```
+
+### Docker Compose (кластер из 2 узлов)
+
+```bash
+docker compose up -d
+```
+
+Поднимаются три контейнера:
+
+| Контейнер | Назначение | Порт (хост) |
+|-----------|------------|-------------|
+| `cache-node-1` | Узел кэша №1 | `8080` |
+| `cache-node-2` | Узел кэша №2 | `8081` |
+| `cache-client` | Клиентский контейнер с `nc` | — |
+
+После запуска можно выполнять запросы из `cache-client`:
+
+```bash
+# Подключиться к клиентскому контейнеру
+docker exec -it cache-client bash
+
+# Внутри контейнера:
+printf '*3\r\n$3\r\nSET\r\n$1\r\na\r\n$1\r\n1\r\n' | nc -w 3 cache-node-1 8080
+printf '*2\r\n$3\r\nGET\r\n$1\r\na\r\n' | nc -w 3 cache-node-2 8080
+```
+
+Остановка кластера:
+
+```bash
+docker compose down -v   # -v удаляет volumes с данными
+```
+
+### Переменные окружения
+
+| Переменная | По умолчанию | Описание |
+|------------|-------------|----------|
+| `CACHE_BIND` | `127.0.0.1:8080` | Адрес и порт для привязки сервера |
+
+## CI/CD (GitHub Actions)
+
+Проект настроен на автоматическую проверку при каждом push/PR в ветки `main`, `master`, `develop`.
+
+**Workflow: `.github/workflows/ci.yml`**
+
+| Job | Команда | Описание |
+|-----|---------|----------|
+| `test` | `cargo test` | Сборка и прогон всех тестов |
+| `lint` | `cargo clippy` + `cargo fmt --check` | Статический анализ и форматирование |
+| `audit` | `cargo audit` | Проверка зависимостей на уязвимости |
+| `build-docker` | Сборка Docker-образа | Build + smoke-тест (PING и SET/GET) |
+
 ## Запуск тестов
 
 ```bash
 cd distributed-cache-rust
 cargo test
-# Ожидается: 75+ passed, 0 failed
+# Ожидается: 79+ passed, 0 failed
 ```

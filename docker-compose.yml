@@ -1,0 +1,72 @@
+version: "3.9"
+
+services:
+  cache-node-1:
+    build:
+      context: ./distributed-cache-rust
+      dockerfile: Dockerfile
+    container_name: cache-node-1
+    ports:
+      - "8080:8080"
+    environment:
+      - CACHE_BIND=0.0.0.0:8080
+    volumes:
+      - cache-data-1:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "printf '*1\\r\\n$4\\r\\nPING\\r\\n' | timeout 3 socat - TCP:127.0.0.1:8080 | grep -q '+PONG'"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    networks:
+      - cache-net
+
+  cache-node-2:
+    build:
+      context: ./distributed-cache-rust
+      dockerfile: Dockerfile
+    container_name: cache-node-2
+    ports:
+      - "8081:8080"
+    environment:
+      - CACHE_BIND=0.0.0.0:8080
+    volumes:
+      - cache-data-2:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "printf '*1\\r\\n$4\\r\\nPING\\r\\n' | timeout 3 socat - TCP:127.0.0.1:8080 | grep -q '+PONG'"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    networks:
+      - cache-net
+
+  # Тестовый клиент для проверки кластерного взаимодействия.
+  client:
+    image: debian:bookworm-slim
+    container_name: cache-client
+    depends_on:
+      cache-node-1:
+        condition: service_healthy
+      cache-node-2:
+        condition: service_healthy
+    command:
+      - /bin/bash
+      - -c
+      - |
+        apt-get update && apt-get install -y --no-install-recommends netcat-traditional procps curl ca-certificates && rm -rf /var/lib/apt/lists/* && \
+        echo "=== Client container ready ===" && \
+        echo "To test cache-node-1: printf '*3\\r\\n$3\\r\\nSET\\r\\n$1\\r\\na\\r\\n$1\\r\\n1\\r\\n' | nc -w 3 cache-node-1 8080" && \
+        echo "To test cache-node-2: printf '*2\\r\\n$3\\r\\nGET\\r\\n$1\\r\\na\\r\\n' | nc -w 3 cache-node-2 8080" && \
+        echo "=== Use 'docker exec -it cache-client bash' to interact ===" && \
+        sleep infinity
+    networks:
+      - cache-net
+
+volumes:
+  cache-data-1:
+  cache-data-2:
+
+networks:
+  cache-net:
+    driver: bridge

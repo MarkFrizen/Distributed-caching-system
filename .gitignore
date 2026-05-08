@@ -9,6 +9,11 @@
 .DS_Store
 Thumbs.db
 
+# Runtime data (RDB/AOF)
+*.rdb
+*.aof
+/data/
+
 .gigacode
 .qwen
 */.gigacode

@@ -1,0 +1,8 @@
+target/
+.git/
+.idea/
+.gigacode/
+.qwen/
+*.rdb
+*.aof
+data/
