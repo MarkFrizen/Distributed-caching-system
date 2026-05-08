@@ -436,4 +436,106 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[tokio::test]
+    async fn save_snapshot_returns_err_on_missing_dir() {
+        // Сохранение в несуществующую директорию (без init) должно вернуть ERR, не панику.
+        let dir = tmp_dir("snapshot_missing_dir");
+        // Сознательно НЕ вызываем init() — директория не создана.
+        let config = PersistenceConfig {
+            data_dir: dir.clone(),
+            aof_enabled: false,
+            ..Default::default()
+        };
+        let persistence = Persistence::new(config);
+
+        let store = Store::new();
+        store.set(b"key", b"val", None);
+
+        let resp = persistence.save_snapshot(&store).await;
+        // Должна вернуть -ERR ..., а не упасть с паникой.
+        assert!(resp.starts_with(b"-ERR"), "save_snapshot должен вернуть ERR, получено: {:?}", String::from_utf8_lossy(&resp));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn load_handles_corrupted_rdb() {
+        // Повреждённый RDB-файл — загрузка не должна паниковать.
+        let dir = tmp_dir("corrupted_rdb");
+        let config = PersistenceConfig {
+            data_dir: dir.clone(),
+            aof_enabled: false,
+            ..Default::default()
+        };
+        let persistence = Persistence::new(config);
+        persistence.init().await.unwrap();
+
+        // Пишем мусор в RDB-файл.
+        let rdb_path = dir.join("dump.rdb");
+        std::fs::write(&rdb_path, b"\xff\xfe\xfd\xfc\x00GARBAGE\x01\x02\x03").unwrap();
+
+        let store = Store::new();
+        // Не должно panicked.
+        persistence.load(&store).await;
+
+        // Хранилище должно остаться пустым.
+        assert_eq!(store.len(), 0);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn load_handles_corrupted_aof() {
+        // Повреждённый AOF-файл — загрузка не должна паниковать.
+        let dir = tmp_dir("corrupted_aof");
+        let config = PersistenceConfig {
+            data_dir: dir.clone(),
+            aof_enabled: true,
+            ..Default::default()
+        };
+        let persistence = Persistence::new(config);
+        persistence.init().await.unwrap();
+
+        // Пишем мусор в AOF-файл.
+        let aof_path = dir.join("appendonly.aof");
+        std::fs::write(&aof_path, b"\x00CORRUPTED\xff\xfeAOF\x01").unwrap();
+
+        let store = Store::new();
+        // Не должно panicked.
+        persistence.load(&store).await;
+
+        // Хранилище должно остаться пустым.
+        assert_eq!(store.len(), 0);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn append_command_noop_when_aof_disabled() {
+        // При выключенном AOF append_command не должен создавать файл.
+        let dir = tmp_dir("aof_disabled");
+        let config = PersistenceConfig {
+            data_dir: dir.clone(),
+            aof_enabled: false,
+            ..Default::default()
+        };
+        let persistence = Persistence::new(config);
+        persistence.init().await.unwrap();
+
+        let set = RespValue::Array(Some(vec![
+            RespValue::BulkString(Some(b"SET".to_vec())),
+            RespValue::BulkString(Some(b"k".to_vec())),
+            RespValue::BulkString(Some(b"v".to_vec())),
+        ]));
+
+        persistence.append_command(&set).await;
+        persistence.flush_aof().await;
+
+        // AOF-файл не должен существовать.
+        let aof_path = dir.join("appendonly.aof");
+        assert!(!aof_path.exists(), "AOF-файл не должен создаваться при aof_enabled=false");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
