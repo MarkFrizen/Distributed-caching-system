@@ -123,9 +123,10 @@ jobs:
           sleep 5
 
           # Проверяем, что PING работает через RESP2
-          RESP=$(printf '*1\r\n$4\r\nPING\r\n' | timeout 5 nc -w 3 127.0.0.1 8080)
+          RAW_RESP=$(printf '*1\r\n$4\r\nPING\r\n' | timeout 5 nc -w 3 127.0.0.1 8080)
+          RESP=$(echo "$RAW_RESP" | tr -d '\r')
           if [ "$RESP" != "+PONG" ]; then
-            echo "PING test failed. Got: $RESP"
+            echo "PING test failed. Got: $RAW_RESP"
             docker logs cache-ci
             docker stop cache-ci && docker rm cache-ci
             exit 1
@@ -133,9 +134,10 @@ jobs:
 
           # Проверяем SET/GET
           printf '*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n' | timeout 5 nc -w 3 127.0.0.1 8080
-          GET_RESP=$(printf '*2\r\n$3\r\nGET\r\n$3\r\nfoo\r\n' | timeout 5 nc -w 3 127.0.0.1 8080)
-          if [ "$GET_RESP" != '$3' ] || ! echo "$GET_RESP" | grep -q 'bar'; then
-            echo "SET/GET test failed. GET response: $GET_RESP"
+          RAW_GET=$(printf '*2\r\n$3\r\nGET\r\n$3\r\nfoo\r\n' | timeout 5 nc -w 3 127.0.0.1 8080)
+          GET_RESP=$(echo "$RAW_GET" | tr -d '\r')
+          if ! echo "$GET_RESP" | grep -q 'bar'; then
+            echo "SET/GET test failed. GET response: $RAW_GET"
             docker logs cache-ci
             docker stop cache-ci && docker rm cache-ci
             exit 1
