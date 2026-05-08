@@ -1,12 +1,14 @@
 pub mod cmd;
 pub mod cluster;
 pub mod persistence;
+pub mod replication;
 pub mod resp;
 pub mod store;
 
 use cmd::{execute_command, parse_command, Command};
 use cluster::{proxy_request, ClusterState};
 use persistence::{Persistence, PersistenceConfig};
+use replication::{MasterState, ReplicationConfig, ReplicationRole, spawn_replica_client};
 use resp::parser::RespBuffer;
 use store::{Store, StoreConfig};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -14,11 +16,12 @@ use tokio::net::TcpListener;
 use tokio::time::{sleep, Duration};
 use tracing::{error, info};
 
-async fn handle_connection(
+pub(crate) async fn handle_connection(
     mut stream: tokio::net::TcpStream,
     store: Store,
     persistence: Persistence,
     cluster: ClusterState,
+    master_state: Option<MasterState>,
 ) {
     let peer_addr = match stream.peer_addr() {
         Ok(addr) => addr,
@@ -64,10 +67,26 @@ async fn handle_connection(
                             // Разбираем и выполняем.
                             let response = match parse_command(&args) {
                                 Ok(cmd) => {
+                                    // --- SYNC (репликация) ---
+                                    if matches!(cmd, Command::Sync) {
+                                        if let Some(ref master) = master_state {
+                                            master.handle_sync(stream, &store).await;
+                                            return; // Соединение захвачено репликацией
+                                        } else {
+                                            let err = resp::parser::RespValue::Error(
+                                                "ERR SYNC not allowed: node is not a master".into(),
+                                            );
+                                            if let Err(e) = stream.write_all(&err.encode()).await {
+                                                error!(peer = %peer_addr, error = %e, "Ошибка записи");
+                                            }
+                                            break;
+                                        }
+                                    }
+
                                     info!(peer = %peer_addr, command = ?cmd, "Выполнение команды");
 
                                     // Проверяем маршрутизацию по ключу.
-                                    if let Some(key) = cmd.routing_key() {
+                                    let response = if let Some(key) = cmd.routing_key() {
                                         if let Some(target_addr) = cluster.route_key(key) {
                                             // Проксируем запрос на другой узел.
                                             info!(key = %String::from_utf8_lossy(key), target = %target_addr, "Проксирование на другой узел");
@@ -79,7 +98,17 @@ async fn handle_connection(
                                     } else {
                                         // Команда без ключа (PING, ECHO, BGSAVE).
                                         execute_cmd(&cmd, &store, &persistence, &frame).await
+                                    };
+
+                                    // Широковещательная рассылка изменяющих команд репликам.
+                                    if cmd.is_modifying()
+                                        && let Some(ref master) = master_state
+                                    {
+                                        let frame_bytes = frame.encode();
+                                        let _ = master.sender().send(frame_bytes);
                                     }
+
+                                    response
                                 }
                                 Err(err_val) => err_val.encode(),
                             };
@@ -109,7 +138,7 @@ async fn handle_connection(
 }
 
 /// Выполняет команду на локальном узле: BGSAVE → Persistence, иначе Store + AOF.
-async fn execute_cmd(cmd: &Command, store: &Store, persistence: &Persistence, frame: &resp::parser::RespValue) -> Vec<u8> {
+pub(crate) async fn execute_cmd(cmd: &Command, store: &Store, persistence: &Persistence, frame: &resp::parser::RespValue) -> Vec<u8> {
     // BGSAVE обрабатывается через Persistence.
     if matches!(cmd, Command::Bgsave) {
         return persistence.save_snapshot(store).await;
@@ -187,6 +216,35 @@ async fn main() {
         }
     };
 
+    // --- Инициализация репликации ---
+
+    let master_state: Option<MasterState>;
+    let replication_config = ReplicationConfig::from_env();
+
+    match replication_config {
+        Some(ReplicationConfig {
+            role: ReplicationRole::Master,
+        }) => {
+            info!("Режим MASTER: репликация включена");
+            master_state = Some(MasterState::new());
+        }
+        Some(ReplicationConfig {
+            role:
+                ReplicationRole::Replica {
+                    ref master_addr,
+                },
+        }) => {
+            info!(master = %master_addr, "Режим REPLICA: подключение к мастеру");
+            master_state = None;
+            // Реплика использует то же хранилище, но без собственной рассылки.
+            spawn_replica_client(master_addr.clone(), store.clone());
+        }
+        None => {
+            info!("Репликация отключена (CACHE_ROLE не задан)");
+            master_state = None;
+        }
+    }
+
     // --- Фоновые задачи ---
 
     // 1. Фоновая очистка просроченных TTL-ключей (каждые 100 мс).
@@ -229,8 +287,9 @@ async fn main() {
                 let store = store.clone();
                 let persistence = persistence.clone();
                 let cluster = cluster.clone();
+                let master_state = master_state.clone();
                 tokio::spawn(async move {
-                    handle_connection(stream, store, persistence, cluster).await;
+                    handle_connection(stream, store, persistence, cluster, master_state).await;
                 });
             }
             Err(e) => {
@@ -274,7 +333,7 @@ mod tests {
                         let s = server_store.clone();
                         let p = server_persistence.clone();
                         tokio::spawn(async move {
-                            handle_connection(stream, s, p, ClusterState::disabled()).await;
+                            handle_connection(stream, s, p, ClusterState::disabled(), None).await;
                         });
                     }
                     Err(_) => break,
@@ -363,7 +422,7 @@ mod tests {
                         let s = server_store.clone();
                         let p = server_persistence.clone();
                         tokio::spawn(async move {
-                            handle_connection(stream, s, p, ClusterState::disabled()).await;
+                            handle_connection(stream, s, p, ClusterState::disabled(), None).await;
                         });
                     }
                     Err(_) => break,
@@ -454,7 +513,7 @@ mod tests {
                         let s = store.clone();
                         let p = persistence.clone();
                         tokio::spawn(async move {
-                            handle_connection(stream, s, p, ClusterState::disabled()).await;
+                            handle_connection(stream, s, p, ClusterState::disabled(), None).await;
                         });
                     }
                     Err(_) => break,
@@ -563,7 +622,7 @@ mod tests {
                         let s = server_store.clone();
                         let p = server_persistence.clone();
                         tokio::spawn(async move {
-                            handle_connection(stream, s, p, ClusterState::disabled()).await;
+                            handle_connection(stream, s, p, ClusterState::disabled(), None).await;
                         });
                     }
                     Err(_) => break,
@@ -631,7 +690,7 @@ mod tests {
                         let s = server_store_b.clone();
                         let p = server_pers_b.clone();
                         tokio::spawn(async move {
-                            handle_connection(stream, s, p, ClusterState::disabled()).await;
+                            handle_connection(stream, s, p, ClusterState::disabled(), None).await;
                         });
                     }
                     Err(_) => break,
@@ -679,7 +738,7 @@ mod tests {
                         let p = server_pers_a.clone();
                         let c = server_cluster_a.clone();
                         tokio::spawn(async move {
-                            handle_connection(stream, s, p, c).await;
+                            handle_connection(stream, s, p, c, None).await;
                         });
                     }
                     Err(_) => break,

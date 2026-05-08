@@ -16,6 +16,8 @@ pub enum Command {
     Exists(Vec<Vec<u8>>),
     /// Сохранить RDB-снимок на диск (BGSAVE).
     Bgsave,
+    /// Команда репликации: запрос полной синхронизации от реплики.
+    Sync,
 }
 
 impl Command {
@@ -173,6 +175,15 @@ pub fn parse_command(args: &[RespValue]) -> Result<Command, RespValue> {
             Ok(Command::Bgsave)
         }
 
+        "SYNC" => {
+            if args.len() > 1 {
+                return Err(RespValue::Error(
+                    "ERR SYNC does not accept arguments".into(),
+                ));
+            }
+            Ok(Command::Sync)
+        }
+
         _ => Err(RespValue::Error(format!(
             "ERR unknown command '{}'",
             name
@@ -202,6 +213,14 @@ pub fn execute_command(cmd: &Command, store: &Store) -> Vec<u8> {
             // Обработка BGSAVE выполняется на уровне handle_connection,
             // где доступен Persistence. Здесь — заглушка.
             b"+OK\r\n".to_vec()
+        }
+        Command::Sync => {
+            // SYNC обрабатывается на уровне handle_connection (главный поток).
+            // Здесь — заглушка для execute_command (не должна вызываться напрямую).
+            RespValue::Error(
+                "ERR SYNC must be handled at connection level".into(),
+            )
+            .encode()
         }
     }
 }
@@ -332,6 +351,18 @@ mod tests {
     #[test]
     fn parse_bgsave_with_args_fails() {
         let result = parse_command(&[bs(b"BGSAVE"), bs(b"extra")]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_sync() {
+        let cmd = parse_command(&[bs(b"SYNC")]).unwrap();
+        assert_eq!(cmd, Command::Sync);
+    }
+
+    #[test]
+    fn parse_sync_with_args_fails() {
+        let result = parse_command(&[bs(b"SYNC"), bs(b"extra")]);
         assert!(result.is_err());
     }
 
