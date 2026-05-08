@@ -219,10 +219,7 @@ impl Persistence {
                     .open(&self.aof_path)
                     .await
                 {
-                    Ok(f) => {
-                        guard.get_or_insert(f);
-                        guard.as_mut().unwrap()
-                    }
+                    Ok(f) => guard.insert(f),
                     Err(e) => {
                         error!("Ошибка открытия AOF-файла: {}", e);
                         return;
@@ -242,10 +239,10 @@ impl Persistence {
             return;
         }
         let mut guard = self.aof_file.lock().await;
-        if let Some(file) = guard.as_mut() {
-            if let Err(e) = file.flush().await {
-                error!("Ошибка сброса AOF: {}", e);
-            }
+        if let Some(file) = guard.as_mut()
+            && let Err(e) = file.flush().await
+        {
+            error!("Ошибка сброса AOF: {}", e);
         }
     }
 

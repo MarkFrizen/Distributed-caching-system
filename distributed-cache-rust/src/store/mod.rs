@@ -111,11 +111,11 @@ impl Store {
             let mut oldest = Instant::now();
 
             for key in &keys {
-                if let Some(entry) = self.inner.get(key) {
-                    if entry.last_access < oldest {
-                        oldest = entry.last_access;
-                        evict_key = Some(key.clone());
-                    }
+                if let Some(entry) = self.inner.get(key)
+                    && entry.last_access < oldest
+                {
+                    oldest = entry.last_access;
+                    evict_key = Some(key.clone());
                 }
             }
 
@@ -315,11 +315,11 @@ impl Store {
         self.inner
             .iter()
             .filter_map(|entry| {
-                let ttl_remaining = entry.expires_at.and_then(|exp| {
+                let ttl_remaining = entry.expires_at.map(|exp| {
                     if exp > now {
-                        Some(exp.duration_since(now).as_secs())
+                        exp.duration_since(now).as_secs()
                     } else {
-                        Some(0)
+                        0
                     }
                 });
                 // Пропускаем уже истёкшие ключи.
