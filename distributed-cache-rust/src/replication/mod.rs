@@ -218,10 +218,10 @@ pub fn spawn_replica_client(master_addr: String, store: Store) {
                                         }
                                         Ok(Some(RespValue::Array(Some(items)))) => {
                                             // Применяем команду к локальному хранилищу.
-                                            if let Ok(cmd) = cmd::parse_command(&items)
-                                                && cmd.is_modifying()
-                                            {
-                                                cmd::execute_command(&cmd, &store);
+                                            if let Ok(cmd) = cmd::parse_command(&items) {
+                                                if cmd.is_modifying() {
+                                                    cmd::execute_command(&cmd, &store);
+                                                }
                                             }
                                         }
                                         Ok(Some(_)) => {

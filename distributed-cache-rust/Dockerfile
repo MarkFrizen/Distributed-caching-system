@@ -12,10 +12,10 @@ COPY Cargo.toml Cargo.lock ./
 RUN mkdir src && echo "fn main() {}" > src/main.rs
 RUN cargo build --release 2>&1 && rm -rf src
 
-# Теперь копируем настоящий исходный код
+# Копируем настоящий исходный код
 COPY src ./src
 
-# Коснёмся main.rs, чтобы пересобрать только его
+# Изменения в файле main.rs, чтобы пересобрать только его
 RUN touch src/main.rs && cargo build --release
 
 # ============================================================================

@@ -1,3 +1,5 @@
+#![allow(clippy::collapsible_if)]
+
 pub mod cmd;
 pub mod cluster;
 pub mod persistence;
@@ -101,11 +103,11 @@ pub(crate) async fn handle_connection(
                                     };
 
                                     // Широковещательная рассылка изменяющих команд репликам.
-                                    if cmd.is_modifying()
-                                        && let Some(ref master) = master_state
-                                    {
-                                        let frame_bytes = frame.encode();
-                                        let _ = master.sender().send(frame_bytes);
+                                    if cmd.is_modifying() {
+                                        if let Some(ref master) = master_state {
+                                            let frame_bytes = frame.encode();
+                                            let _ = master.sender().send(frame_bytes);
+                                        }
                                     }
 
                                     response
