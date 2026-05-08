@@ -1,7 +1,7 @@
 use crate::resp::parser::RespValue;
 use crate::store::Store;
 
-/// Parsed Redis command ready for execution.
+/// Разобранный Redis-команды, готовой к выполнению.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     Ping(Option<Vec<u8>>),
@@ -16,10 +16,10 @@ pub enum Command {
     Exists(Vec<Vec<u8>>),
 }
 
-/// Try to convert a RESP array into a `Command`.
+/// Попытка преобразовать массив RESP в `Command`.
 ///
-/// Returns `Err(resp_error)` when the command is unknown or has wrong
-/// argument count — the caller can send this error straight to the client.
+/// Возвращает `Err(resp_error)`, если команда неизвестна или имеет неправильное
+/// количество аргументов — вызывающий код может отправить эту ошибку напрямую клиенту.
 pub fn parse_command(args: &[RespValue]) -> Result<Command, RespValue> {
     if args.is_empty() {
         return Err(RespValue::Error("ERR empty command".into()));
@@ -147,8 +147,7 @@ pub fn parse_command(args: &[RespValue]) -> Result<Command, RespValue> {
     }
 }
 
-/// Execute a parsed `Command` against the store, returning the RESP-encoded
-/// response bytes.
+/// Выполняет разобранную `Command` на хранилище и возвращает ответные байты в кодировке RESP.
 pub fn execute_command(cmd: &Command, store: &Store) -> Vec<u8> {
     match cmd {
         Command::Ping(msg) => match msg {
@@ -169,9 +168,9 @@ pub fn execute_command(cmd: &Command, store: &Store) -> Vec<u8> {
     }
 }
 
-// -- Helpers -----------------------------------------------------------------
+// -- Вспомогательные функции --------------------------------------------------
 
-/// Extract the bytes from a `RespValue` that should be a `BulkString`.
+/// Извлекает байты из `RespValue`, который должен быть `BulkString`.
 fn get_bulk(v: &RespValue) -> Result<Vec<u8>, RespValue> {
     match v {
         RespValue::BulkString(Some(b)) => Ok(b.clone()),
@@ -183,7 +182,7 @@ fn get_bulk(v: &RespValue) -> Result<Vec<u8>, RespValue> {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// Тесты
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]

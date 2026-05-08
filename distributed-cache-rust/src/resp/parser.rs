@@ -10,30 +10,30 @@ use nom::{
 };
 
 // ---------------------------------------------------------------------------
-// RESP2 value types
+// Типы значений RESP2
 // ---------------------------------------------------------------------------
 
-/// Represents any value in the Redis serialisation protocol (RESP2).
+/// Представляет любое значение в протоколе сериализации Redis (RESP2).
 #[derive(Debug, Clone, PartialEq)]
 pub enum RespValue {
-    /// `+<string>\r\n`
+    /// `+<строка>\r\n`
     SimpleString(String),
-    /// `-<string>\r\n`
+    /// `-<строка>\r\n`
     Error(String),
-    /// `:<integer>\r\n`
+    /// `:<целое>\r\n`
     Integer(i64),
-    /// `$<len>\r\n<data>\r\n` — `None` is the null bulk string (`$-1\r\n`).
+    /// `$<длина>\r\n<данные>\r\n` — `None` представляет собой пустую строку-батон (`$-1\r\n`).
     BulkString(Option<Vec<u8>>),
-    /// `*<count>\r\n...` — `None` is the null array (`*-1\r\n`).
+    /// `*<количество>\r\n...` — `None` представляет собой пустой массив (`*-1\r\n`).
     Array(Option<Vec<RespValue>>),
 }
 
 // ---------------------------------------------------------------------------
-// Encoding helpers (RespValue → bytes, useful for tests & Stage 3)
+// Вспомогательные функции кодирования (RespValue → bytes, полезны для тестов)
 // ---------------------------------------------------------------------------
 
 impl RespValue {
-    /// Encode this value into a RESP2 byte string.
+    /// Кодирует это значение в строку байтов RESP2.
     pub fn encode(&self) -> Vec<u8> {
         match self {
             RespValue::SimpleString(s) => {
@@ -69,11 +69,11 @@ impl RespValue {
 }
 
 // ---------------------------------------------------------------------------
-// Streaming buffer — accumulates socket data and extracts complete frames
+// Потоковый буфер — накапливает данные сокета и извлекает из них полные фреймы
 // ---------------------------------------------------------------------------
 
-/// A byte buffer used for accumulating partial reads and extracting complete
-/// RESP2 frames from them.
+/// Буфер байтов, используемый для накопления частичных данных и извлечения из них
+/// полных фреймов RESP2.
 #[derive(Debug)]
 pub struct RespBuffer {
     buf: Vec<u8>,
@@ -84,17 +84,17 @@ impl RespBuffer {
         RespBuffer { buf: Vec::new() }
     }
 
-    /// Append newly received bytes into the buffer.
+    /// Добавляет вновь полученные байты в буфер.
     pub fn feed(&mut self, data: &[u8]) {
         self.buf.extend_from_slice(data);
     }
 
-    /// Try to parse one complete frame from the head of the buffer.
+    /// Пытается разобрать один полный фрейм с начала буфера.
     ///
-    /// - `Ok(Some(value))` — a complete frame was parsed; the consumed bytes are
-    ///   removed from the buffer, and the caller should handle `value`.
-    /// - `Ok(None)` — not enough data yet (nom returned `Incomplete`).
-    /// - `Err(msg)` — the buffer contains invalid RESP2 data.
+    /// - `Ok(Some(value))` — фрейм успешно разобран; потреблённые байты
+    ///   удаляются из буфера, и вызывающий код должен обработать `value`.
+    /// - `Ok(None)` — недостаточно данных (nom вернул `Incomplete`).
+    /// - `Err(msg)` — буфер содержит недопустимые данные RESP2.
     pub fn try_parse(&mut self) -> Result<Option<RespValue>, String> {
         let result = parse_frame(&self.buf);
         match result {
@@ -110,7 +110,7 @@ impl RespBuffer {
                 if consumed > 0 {
                     self.buf.drain(..consumed);
                 } else {
-                    // Nothing consumed → skip one byte to break deadlock.
+                    // Ничего не было потреблено → пропускаем один байт, чтобы выйти из тупика.
                     self.buf.drain(..1);
                 }
                 Err(format!("RESP parse error: {:?}", code))
@@ -118,7 +118,7 @@ impl RespBuffer {
         }
     }
 
-    /// Returns a reference to the underlying buffer (for debugging).
+    /// Возвращает ссылку на базовый буфер (для отладки).
     pub fn pending(&self) -> &[u8] {
         &self.buf
     }
@@ -131,12 +131,12 @@ impl Default for RespBuffer {
 }
 
 // ---------------------------------------------------------------------------
-// Nom-based RESP2 parsers  (streaming mode)
+// Парсеры RESP2 на основе Nom (потоковый режим)
 // ---------------------------------------------------------------------------
 
-/// Parse one complete RESP2 frame from `input`.
+/// Разбирает один полный фрейм RESP2 из `input`.
 ///
-/// Returns the remaining (unconsumed) bytes and the parsed value.
+/// Возвращает оставшиеся (необработанные) байты и разобранное значение.
 pub fn parse_frame(input: &[u8]) -> IResult<&[u8], RespValue> {
     alt((
         parse_simple_string,
@@ -209,7 +209,7 @@ fn parse_array(input: &[u8]) -> IResult<&[u8], RespValue> {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// Тесты
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -517,7 +517,7 @@ mod tests {
         let mut buf = RespBuffer::new();
         buf.feed(b"~garbage\r\n+OK\r\n");
 
-        // Each call skips 1 byte — keep calling until valid frame emerges.
+        // Каждый вызов пропускает 1 байт — продолжаем вызывать, пока не появится валидный фрейм.
         let val = loop {
             match buf.try_parse() {
                 Ok(Some(v)) => break v,
