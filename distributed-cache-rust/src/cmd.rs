@@ -107,9 +107,9 @@ pub fn parse_command(args: &[RespValue]) -> Result<Command, RespValue> {
                     }
                     let secs_raw = get_bulk(&args[4])?;
                     let secs_str = String::from_utf8_lossy(&secs_raw);
-                    let secs: u64 = secs_str
-                        .parse()
-                        .map_err(|_| RespValue::Error("ERR value is not an integer or out of range".into()))?;
+                    let secs: u64 = secs_str.parse().map_err(|_| {
+                        RespValue::Error("ERR value is not an integer or out of range".into())
+                    })?;
                     Some(secs)
                 } else {
                     return Err(RespValue::Error(format!(
@@ -129,14 +129,9 @@ pub fn parse_command(args: &[RespValue]) -> Result<Command, RespValue> {
         }
 
         "GET" => {
-            let key = args
-                .get(1)
-                .and_then(|v| get_bulk(v).ok())
-                .ok_or_else(|| {
-                    RespValue::Error(
-                        "ERR wrong number of arguments for 'GET' command".into(),
-                    )
-                })?;
+            let key = args.get(1).and_then(|v| get_bulk(v).ok()).ok_or_else(|| {
+                RespValue::Error("ERR wrong number of arguments for 'GET' command".into())
+            })?;
             Ok(Command::Get(key))
         }
 
@@ -184,10 +179,7 @@ pub fn parse_command(args: &[RespValue]) -> Result<Command, RespValue> {
             Ok(Command::Sync)
         }
 
-        _ => Err(RespValue::Error(format!(
-            "ERR unknown command '{}'",
-            name
-        ))),
+        _ => Err(RespValue::Error(format!("ERR unknown command '{}'", name))),
     }
 }
 
@@ -199,7 +191,11 @@ pub fn execute_command(cmd: &Command, store: &Store) -> Vec<u8> {
             None => RespValue::SimpleString("PONG".into()).encode(),
         },
         Command::Echo(msg) => RespValue::BulkString(Some(msg.clone())).encode(),
-        Command::Set { key, value, ttl_secs } => store.set(key, value, *ttl_secs),
+        Command::Set {
+            key,
+            value,
+            ttl_secs,
+        } => store.set(key, value, *ttl_secs),
         Command::Get(key) => store.get(key),
         Command::Del(keys) => {
             let refs: Vec<&[u8]> = keys.iter().map(|k| k.as_slice()).collect();
@@ -217,10 +213,7 @@ pub fn execute_command(cmd: &Command, store: &Store) -> Vec<u8> {
         Command::Sync => {
             // SYNC обрабатывается на уровне handle_connection (главный поток).
             // Здесь — заглушка для execute_command (не должна вызываться напрямую).
-            RespValue::Error(
-                "ERR SYNC must be handled at connection level".into(),
-            )
-            .encode()
+            RespValue::Error("ERR SYNC must be handled at connection level".into()).encode()
         }
     }
 }
@@ -285,8 +278,7 @@ mod tests {
 
     #[test]
     fn parse_set_with_ttl() {
-        let cmd = parse_command(&[bs(b"SET"), bs(b"k"), bs(b"v"), bs(b"EX"), bs(b"10")])
-            .unwrap();
+        let cmd = parse_command(&[bs(b"SET"), bs(b"k"), bs(b"v"), bs(b"EX"), bs(b"10")]).unwrap();
         assert_eq!(
             cmd,
             Command::Set {

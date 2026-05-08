@@ -1,7 +1,7 @@
 use dashmap::DashMap;
 use rand::Rng;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 /// Приблизительные накладные расходы на одну запись в DashMap (заголовки, хеш-таблица, enum и т.д.).
@@ -288,10 +288,7 @@ impl Store {
 
         for key in &keys_to_check {
             if let Some(entry) = self.inner.get(key) {
-                let expired = entry
-                    .expires_at
-                    .map(|d| now >= d)
-                    .unwrap_or(false);
+                let expired = entry.expires_at.map(|d| now >= d).unwrap_or(false);
                 if expired {
                     let key_len = entry.key_len;
                     let data_len = entry.data.len();
@@ -508,7 +505,11 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(50));
 
         let removed = store.clean_expired();
-        assert!(removed >= 1, "должен удалить истёкший ключ, убрано: {}", removed);
+        assert!(
+            removed >= 1,
+            "должен удалить истёкший ключ, убрано: {}",
+            removed
+        );
 
         // Постоянный ключ должен остаться.
         assert_eq!(

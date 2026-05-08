@@ -1,12 +1,11 @@
 use nom::{
-    IResult,
+    IResult, Parser,
     branch::alt,
     bytes::streaming::{take, take_until},
     character::streaming::{char, crlf, digit1},
     combinator::{opt, recognize},
     multi::count,
     sequence::{preceded, terminated},
-    Parser,
 };
 
 // ---------------------------------------------------------------------------
@@ -181,8 +180,7 @@ fn parse_signed_int(input: &[u8]) -> IResult<&[u8], i64> {
 }
 
 fn parse_bulk_string(input: &[u8]) -> IResult<&[u8], RespValue> {
-    let (input, len) =
-        preceded(char('$'), terminated(parse_signed_int, crlf)).parse(input)?;
+    let (input, len) = preceded(char('$'), terminated(parse_signed_int, crlf)).parse(input)?;
 
     if len == -1 {
         return Ok((input, RespValue::BulkString(None)));
@@ -196,8 +194,7 @@ fn parse_bulk_string(input: &[u8]) -> IResult<&[u8], RespValue> {
 }
 
 fn parse_array(input: &[u8]) -> IResult<&[u8], RespValue> {
-    let (input, cnt) =
-        preceded(char('*'), terminated(parse_signed_int, crlf)).parse(input)?;
+    let (input, cnt) = preceded(char('*'), terminated(parse_signed_int, crlf)).parse(input)?;
 
     if cnt == -1 {
         return Ok((input, RespValue::Array(None)));
@@ -274,15 +271,13 @@ mod tests {
 
     #[test]
     fn parse_error_with_message() {
-        let input =
-            b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n";
+        let input = b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n";
         let (rem, val) = parse_frame(input).unwrap();
         assert!(rem.is_empty());
         assert_eq!(
             val,
             RespValue::Error(
-                "WRONGTYPE Operation against a key holding the wrong kind of value"
-                    .into()
+                "WRONGTYPE Operation against a key holding the wrong kind of value".into()
             )
         );
     }

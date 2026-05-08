@@ -1,21 +1,21 @@
 #![allow(clippy::collapsible_if)]
 
-pub mod cmd;
 pub mod cluster;
+pub mod cmd;
 pub mod persistence;
 pub mod replication;
 pub mod resp;
 pub mod store;
 
-use cmd::{execute_command, parse_command, Command};
-use cluster::{proxy_request, ClusterState};
+use cluster::{ClusterState, proxy_request};
+use cmd::{Command, execute_command, parse_command};
 use persistence::{Persistence, PersistenceConfig};
 use replication::{MasterState, ReplicationConfig, ReplicationRole, spawn_replica_client};
 use resp::parser::RespBuffer;
 use store::{Store, StoreConfig};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 use tracing::{error, info};
 
 pub(crate) async fn handle_connection(
@@ -140,7 +140,12 @@ pub(crate) async fn handle_connection(
 }
 
 /// Выполняет команду на локальном узле: BGSAVE → Persistence, иначе Store + AOF.
-pub(crate) async fn execute_cmd(cmd: &Command, store: &Store, persistence: &Persistence, frame: &resp::parser::RespValue) -> Vec<u8> {
+pub(crate) async fn execute_cmd(
+    cmd: &Command,
+    store: &Store,
+    persistence: &Persistence,
+    frame: &resp::parser::RespValue,
+) -> Vec<u8> {
     // BGSAVE обрабатывается через Persistence.
     if matches!(cmd, Command::Bgsave) {
         return persistence.save_snapshot(store).await;
@@ -168,9 +173,7 @@ async fn main() {
     info!("Сервер слушает на {}", bind_addr);
 
     // Инициализация хранилища.
-    let store_config = StoreConfig {
-        max_memory_mb: 128,
-    };
+    let store_config = StoreConfig { max_memory_mb: 128 };
     let store = Store::with_config(store_config);
 
     // Инициализация персистентности.
@@ -207,7 +210,10 @@ async fn main() {
                     ClusterState::from_config(&config)
                 }
                 Err(e) => {
-                    error!("Ошибка парсинга CACHE_CLUSTER (будет отключена кластеризация): {}", e);
+                    error!(
+                        "Ошибка парсинга CACHE_CLUSTER (будет отключена кластеризация): {}",
+                        e
+                    );
                     ClusterState::disabled()
                 }
             }
@@ -231,10 +237,7 @@ async fn main() {
             master_state = Some(MasterState::new());
         }
         Some(ReplicationConfig {
-            role:
-                ReplicationRole::Replica {
-                    ref master_addr,
-                },
+            role: ReplicationRole::Replica { ref master_addr },
         }) => {
             info!(master = %master_addr, "Режим REPLICA: подключение к мастеру");
             master_state = None;
@@ -367,10 +370,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         // Выполняем BGSAVE.
-        client
-            .write_all(b"*1\r\n$6\r\nBGSAVE\r\n")
-            .await
-            .unwrap();
+        client.write_all(b"*1\r\n$6\r\nBGSAVE\r\n").await.unwrap();
         client.flush().await.unwrap();
         let n = tokio::time::timeout(Duration::from_secs(5), client.read(&mut buf))
             .await
@@ -558,7 +558,11 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(&buf[..n], b"$5\r\nhello\r\n", "GET должен возвращать строку-батон");
+        assert_eq!(
+            &buf[..n],
+            b"$5\r\nhello\r\n",
+            "GET должен возвращать строку-батон"
+        );
 
         // --- DEL ---
         client
@@ -637,10 +641,7 @@ mod tests {
         let mut client = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
             .await
             .unwrap();
-        client
-            .write_all(b"*1\r\n$4\r\nPING\r\n")
-            .await
-            .unwrap();
+        client.write_all(b"*1\r\n$4\r\nPING\r\n").await.unwrap();
         let mut buf = [0u8; 32];
         let _ = tokio::time::timeout(Duration::from_secs(2), client.read(&mut buf))
             .await
@@ -779,16 +780,18 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(&buf[..n], b"+OK\r\n", "SET через прокси должен возвращать +OK");
+        assert_eq!(
+            &buf[..n],
+            b"+OK\r\n",
+            "SET через прокси должен возвращать +OK"
+        );
         let _ = client_a.shutdown().await;
 
         // --- Проверка: GET напрямую с B ---
-        let mut client_b = tokio::net::TcpStream::connect(addr_b.clone()).await.unwrap();
-        let cmd = format!(
-            "*2\r\n$3\r\nGET\r\n${}\r\n{}\r\n",
-            key_to_b.len(),
-            key_to_b
-        );
+        let mut client_b = tokio::net::TcpStream::connect(addr_b.clone())
+            .await
+            .unwrap();
+        let cmd = format!("*2\r\n$3\r\nGET\r\n${}\r\n{}\r\n", key_to_b.len(), key_to_b);
         client_b.write_all(cmd.as_bytes()).await.unwrap();
         let n = tokio::time::timeout(Duration::from_secs(5), client_b.read(&mut buf))
             .await

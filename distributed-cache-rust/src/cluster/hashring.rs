@@ -153,8 +153,16 @@ mod tests {
         }
 
         // Каждый узел должен получить хотя бы 20% ключей.
-        assert!(node1_count > 200, "node1 получил всего {} ключей", node1_count);
-        assert!(node2_count > 200, "node2 получил всего {} ключей", node2_count);
+        assert!(
+            node1_count > 200,
+            "node1 получил всего {} ключей",
+            node1_count
+        );
+        assert!(
+            node2_count > 200,
+            "node2 получил всего {} ключей",
+            node2_count
+        );
 
         // Итого все ключи распределены.
         assert_eq!(node1_count + node2_count, 1000);
@@ -172,7 +180,10 @@ mod tests {
         ring.remove_node(&before);
         let after = ring.get_node(key).unwrap();
 
-        assert_ne!(before, after, "После удаления узла ключ должен перенаправиться");
+        assert_ne!(
+            before, after,
+            "После удаления узла ключ должен перенаправиться"
+        );
     }
 
     #[test]

@@ -171,8 +171,7 @@ impl Persistence {
     /// Загружает RDB-снимок: читает файл, разбирает RESP2-фреймы,
     /// выполняет команды SET для восстановления.
     fn load_rdb(&self, store: &Store) -> Result<usize, String> {
-        let data = std::fs::read(&self.rdb_path)
-            .map_err(|e| format!("RDB read error: {}", e))?;
+        let data = std::fs::read(&self.rdb_path).map_err(|e| format!("RDB read error: {}", e))?;
 
         let mut buf = RespBuffer::new();
         buf.feed(&data);
@@ -248,8 +247,7 @@ impl Persistence {
 
     /// Проигрывает AOF-файл: читает, разбирает RESP2-фреймы и выполняет команды.
     fn replay_aof(&self, store: &Store) -> Result<usize, String> {
-        let data = std::fs::read(&self.aof_path)
-            .map_err(|e| format!("AOF read error: {}", e))?;
+        let data = std::fs::read(&self.aof_path).map_err(|e| format!("AOF read error: {}", e))?;
 
         if data.is_empty() {
             return Ok(0);
@@ -359,10 +357,7 @@ mod tests {
             store2.get(b"permanent"),
             RespValue::BulkString(Some(b"stay".to_vec())).encode()
         );
-        assert_eq!(
-            store2.get(b"gone"),
-            RespValue::BulkString(None).encode()
-        );
+        assert_eq!(store2.get(b"gone"), RespValue::BulkString(None).encode());
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -406,10 +401,7 @@ mod tests {
         persistence.load(&store2).await;
 
         // Ключ 'a' был удалён — не должен быть.
-        assert_eq!(
-            store2.get(b"a"),
-            RespValue::BulkString(None).encode()
-        );
+        assert_eq!(store2.get(b"a"), RespValue::BulkString(None).encode());
         // Ключ 'b' должен быть с TTL.
         assert_eq!(
             store2.get(b"b"),
@@ -454,7 +446,11 @@ mod tests {
 
         let resp = persistence.save_snapshot(&store).await;
         // Должна вернуть -ERR ..., а не упасть с паникой.
-        assert!(resp.starts_with(b"-ERR"), "save_snapshot должен вернуть ERR, получено: {:?}", String::from_utf8_lossy(&resp));
+        assert!(
+            resp.starts_with(b"-ERR"),
+            "save_snapshot должен вернуть ERR, получено: {:?}",
+            String::from_utf8_lossy(&resp)
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -534,7 +530,10 @@ mod tests {
 
         // AOF-файл не должен существовать.
         let aof_path = dir.join("appendonly.aof");
-        assert!(!aof_path.exists(), "AOF-файл не должен создаваться при aof_enabled=false");
+        assert!(
+            !aof_path.exists(),
+            "AOF-файл не должен создаваться при aof_enabled=false"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -106,13 +106,12 @@ impl ClusterState {
 pub async fn proxy_request(frame_bytes: &[u8], target_addr: &str) -> Vec<u8> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
-    use tokio::time::{timeout, Duration};
+    use tokio::time::{Duration, timeout};
 
     match timeout(Duration::from_secs(5), TcpStream::connect(target_addr)).await {
         Ok(Ok(mut stream)) => {
             // Отправляем запрос.
-            if let Err(e) = timeout(Duration::from_secs(5), stream.write_all(frame_bytes)).await
-            {
+            if let Err(e) = timeout(Duration::from_secs(5), stream.write_all(frame_bytes)).await {
                 let msg = format!("ERR proxy write timeout to {}: {}", target_addr, e);
                 warn!("{}", msg);
                 return format!("-{}\r\n", msg).into_bytes();

@@ -17,7 +17,7 @@
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::broadcast;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 use tracing::{info, warn};
 
 use crate::cmd;
@@ -54,14 +54,17 @@ impl ReplicationConfig {
                 role: ReplicationRole::Master,
             }),
             "replica" => {
-                let master_addr = std::env::var("CACHE_MASTER")
-                    .unwrap_or_else(|_| "127.0.0.1:8080".into());
+                let master_addr =
+                    std::env::var("CACHE_MASTER").unwrap_or_else(|_| "127.0.0.1:8080".into());
                 Some(ReplicationConfig {
                     role: ReplicationRole::Replica { master_addr },
                 })
             }
             other => {
-                warn!("Неизвестная роль '{}' в CACHE_ROLE, репликация отключена", other);
+                warn!(
+                    "Неизвестная роль '{}' в CACHE_ROLE, репликация отключена",
+                    other
+                );
                 None
             }
         }
@@ -187,10 +190,7 @@ pub fn spawn_replica_client(master_addr: String, store: Store) {
                     info!(master = %master_addr, "Реплика: подключена к мастеру");
 
                     // Отправляем SYNC.
-                    if let Err(e) = stream
-                        .write_all(b"*1\r\n$4\r\nSYNC\r\n")
-                        .await
-                    {
+                    if let Err(e) = stream.write_all(b"*1\r\n$4\r\nSYNC\r\n").await {
                         warn!(master = %master_addr, error = %e, "Реплика: ошибка отправки SYNC");
                         sleep(Duration::from_secs(1)).await;
                         continue;
@@ -214,7 +214,9 @@ pub fn spawn_replica_client(master_addr: String, store: Store) {
                                         Ok(Some(RespValue::SimpleString(s)))
                                             if s == "SYNC_DONE" =>
                                         {
-                                            info!("Реплика: снимок получен, переход к живым командам");
+                                            info!(
+                                                "Реплика: снимок получен, переход к живым командам"
+                                            );
                                         }
                                         Ok(Some(RespValue::Array(Some(items)))) => {
                                             // Применяем команду к локальному хранилищу.
@@ -283,9 +285,7 @@ mod tests {
         master_persistence.init().await.unwrap();
         let master_state = MasterState::new();
 
-        let master_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let master_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let master_port = master_listener.local_addr().unwrap().port();
         let master_addr = format!("127.0.0.1:{}", master_port);
 
@@ -318,9 +318,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // --- SET на мастере ---
-        let mut master_client = tokio::net::TcpStream::connect(&master_addr)
-            .await
-            .unwrap();
+        let mut master_client = tokio::net::TcpStream::connect(&master_addr).await.unwrap();
         master_client
             .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nkey\r\n$5\r\nvalue\r\n")
             .await
@@ -388,9 +386,7 @@ mod tests {
         master_persistence.init().await.unwrap();
         let master_state = MasterState::new();
 
-        let master_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let master_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let master_port = master_listener.local_addr().unwrap().port();
         let master_addr = format!("127.0.0.1:{}", master_port);
 
