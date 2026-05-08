@@ -10,5 +10,7 @@
 Thumbs.db
 
 .gigacode
-.qwen	
+.qwen
+*/.gigacode
+*/.qwen	
 
