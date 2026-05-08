@@ -1,9 +1,11 @@
 pub mod cmd;
+pub mod cluster;
 pub mod persistence;
 pub mod resp;
 pub mod store;
 
 use cmd::{execute_command, parse_command, Command};
+use cluster::{proxy_request, ClusterState};
 use persistence::{Persistence, PersistenceConfig};
 use resp::parser::RespBuffer;
 use store::{Store, StoreConfig};
@@ -16,6 +18,7 @@ async fn handle_connection(
     mut stream: tokio::net::TcpStream,
     store: Store,
     persistence: Persistence,
+    cluster: ClusterState,
 ) {
     let peer_addr = match stream.peer_addr() {
         Ok(addr) => addr,
@@ -63,15 +66,19 @@ async fn handle_connection(
                                 Ok(cmd) => {
                                     info!(peer = %peer_addr, command = ?cmd, "Выполнение команды");
 
-                                    // BGSAVE обрабатывается через Persistence.
-                                    if matches!(cmd, Command::Bgsave) {
-                                        persistence.save_snapshot(&store).await
-                                    } else {
-                                        // AOF: логируем изменяющие команды.
-                                        if cmd.is_modifying() {
-                                            persistence.append_command(&frame).await;
+                                    // Проверяем маршрутизацию по ключу.
+                                    if let Some(key) = cmd.routing_key() {
+                                        if let Some(target_addr) = cluster.route_key(key) {
+                                            // Проксируем запрос на другой узел.
+                                            info!(key = %String::from_utf8_lossy(key), target = %target_addr, "Проксирование на другой узел");
+                                            proxy_request(&frame.encode(), &target_addr).await
+                                        } else {
+                                            // Ключ принадлежит этому узлу.
+                                            execute_cmd(&cmd, &store, &persistence, &frame).await
                                         }
-                                        execute_command(&cmd, &store)
+                                    } else {
+                                        // Команда без ключа (PING, ECHO, BGSAVE).
+                                        execute_cmd(&cmd, &store, &persistence, &frame).await
                                     }
                                 }
                                 Err(err_val) => err_val.encode(),
@@ -99,6 +106,19 @@ async fn handle_connection(
             }
         }
     }
+}
+
+/// Выполняет команду на локальном узле: BGSAVE → Persistence, иначе Store + AOF.
+async fn execute_cmd(cmd: &Command, store: &Store, persistence: &Persistence, frame: &resp::parser::RespValue) -> Vec<u8> {
+    // BGSAVE обрабатывается через Persistence.
+    if matches!(cmd, Command::Bgsave) {
+        return persistence.save_snapshot(store).await;
+    }
+    // AOF: логируем изменяющие команды.
+    if cmd.is_modifying() {
+        persistence.append_command(frame).await;
+    }
+    execute_command(cmd, store)
 }
 
 #[tokio::main]
@@ -137,6 +157,35 @@ async fn main() {
         error!("Ошибка инициализации директории данных: {}", e);
     }
     persistence.load(&store).await;
+
+    // --- Инициализация кластера ---
+
+    // Конфигурация кластера: из переменной окружения CACHE_CLUSTER (JSON-список узлов)
+    // или по умолчанию disabled (single-node режим).
+    let cluster = match std::env::var("CACHE_CLUSTER") {
+        Ok(json) => {
+            // Ожидаем JSON вида:
+            // [{"address":"127.0.0.1:8080","vnodes":256},{"address":"127.0.0.1:8081","vnodes":256}]
+            match serde_json::from_str::<Vec<cluster::ClusterNodeConfig>>(&json) {
+                Ok(nodes) => {
+                    let config = cluster::ClusterConfig {
+                        current_addr: bind_addr.clone(),
+                        nodes,
+                        default_vnodes: 256,
+                    };
+                    ClusterState::from_config(&config)
+                }
+                Err(e) => {
+                    error!("Ошибка парсинга CACHE_CLUSTER (будет отключена кластеризация): {}", e);
+                    ClusterState::disabled()
+                }
+            }
+        }
+        Err(_) => {
+            info!("CACHE_CLUSTER не задан — single-node режим");
+            ClusterState::disabled()
+        }
+    };
 
     // --- Фоновые задачи ---
 
@@ -179,8 +228,9 @@ async fn main() {
                 info!("Принято соединение от: {}", addr);
                 let store = store.clone();
                 let persistence = persistence.clone();
+                let cluster = cluster.clone();
                 tokio::spawn(async move {
-                    handle_connection(stream, store, persistence).await;
+                    handle_connection(stream, store, persistence, cluster).await;
                 });
             }
             Err(e) => {
@@ -224,7 +274,7 @@ mod tests {
                         let s = server_store.clone();
                         let p = server_persistence.clone();
                         tokio::spawn(async move {
-                            handle_connection(stream, s, p).await;
+                            handle_connection(stream, s, p, ClusterState::disabled()).await;
                         });
                     }
                     Err(_) => break,
@@ -313,7 +363,7 @@ mod tests {
                         let s = server_store.clone();
                         let p = server_persistence.clone();
                         tokio::spawn(async move {
-                            handle_connection(stream, s, p).await;
+                            handle_connection(stream, s, p, ClusterState::disabled()).await;
                         });
                     }
                     Err(_) => break,
@@ -404,7 +454,7 @@ mod tests {
                         let s = store.clone();
                         let p = persistence.clone();
                         tokio::spawn(async move {
-                            handle_connection(stream, s, p).await;
+                            handle_connection(stream, s, p, ClusterState::disabled()).await;
                         });
                     }
                     Err(_) => break,
@@ -513,7 +563,7 @@ mod tests {
                         let s = server_store.clone();
                         let p = server_persistence.clone();
                         tokio::spawn(async move {
-                            handle_connection(stream, s, p).await;
+                            handle_connection(stream, s, p, ClusterState::disabled()).await;
                         });
                     }
                     Err(_) => break,
@@ -546,6 +596,152 @@ mod tests {
             assert_eq!(meta.len(), 0, "AOF должен быть пустым после PING");
         }
 
+        let _ = std::fs::remove_dir_all(&test_dir);
+    }
+
+    /// Интеграционный тест кластерного проксирования.
+    ///
+    /// Запускает узел B (back-end, single-node) и узел A (с кластеризацией,
+    /// знающий об A и B). Находит ключ, который маршрутизируется на B,
+    /// отправляет SET на A → A проксирует на B → проверяем GET с B напрямую.
+    #[tokio::test]
+    async fn integration_cluster_proxying() {
+        let test_dir = std::env::temp_dir().join("cache_cluster_proxy");
+        let _ = std::fs::remove_dir_all(&test_dir);
+
+        // --- Узел B (back-end, без кластеризации) ---
+        let store_b = Store::new();
+        let pers_b = Persistence::new(PersistenceConfig {
+            data_dir: test_dir.join("node_b"),
+            aof_enabled: false,
+            ..Default::default()
+        });
+        pers_b.init().await.unwrap();
+
+        let listener_b = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port_b = listener_b.local_addr().unwrap().port();
+        let addr_b = format!("127.0.0.1:{}", port_b);
+
+        let server_store_b = store_b.clone();
+        let server_pers_b = pers_b.clone();
+        tokio::spawn(async move {
+            loop {
+                match listener_b.accept().await {
+                    Ok((stream, _)) => {
+                        let s = server_store_b.clone();
+                        let p = server_pers_b.clone();
+                        tokio::spawn(async move {
+                            handle_connection(stream, s, p, ClusterState::disabled()).await;
+                        });
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        // --- Узел A (с кластеризацией) ---
+        let store_a = Store::new();
+        let pers_a = Persistence::new(PersistenceConfig {
+            data_dir: test_dir.join("node_a"),
+            aof_enabled: false,
+            ..Default::default()
+        });
+        pers_a.init().await.unwrap();
+
+        // Кластер знает о двух узлах.
+        let cluster_config_a = cluster::ClusterConfig {
+            current_addr: "127.0.0.1:9999".into(),
+            nodes: vec![
+                cluster::ClusterNodeConfig {
+                    address: "127.0.0.1:9999".into(),
+                    vnodes: 256,
+                },
+                cluster::ClusterNodeConfig {
+                    address: addr_b.clone(),
+                    vnodes: 256,
+                },
+            ],
+            default_vnodes: 256,
+        };
+        let cluster_a = ClusterState::from_config(&cluster_config_a);
+
+        let listener_a = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port_a = listener_a.local_addr().unwrap().port();
+
+        let server_store_a = store_a.clone();
+        let server_pers_a = pers_a.clone();
+        let server_cluster_a = cluster_a.clone();
+        tokio::spawn(async move {
+            loop {
+                match listener_a.accept().await {
+                    Ok((stream, _)) => {
+                        let s = server_store_a.clone();
+                        let p = server_pers_a.clone();
+                        let c = server_cluster_a.clone();
+                        tokio::spawn(async move {
+                            handle_connection(stream, s, p, c).await;
+                        });
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // --- Находим ключ, который маршрутизируется на B ---
+        let ring = cluster_a.ring.read().unwrap();
+        let key_to_b = (0u64..1000)
+            .map(|i| format!("cluster_test_{}", i))
+            .find(|k| ring.get_node(k.as_bytes()) == Some(addr_b.as_str()))
+            .expect("Должен найти ключ, уходящий на узел B");
+        drop(ring);
+
+        let test_value = format!("value_for_{}", key_to_b);
+
+        // --- SET через узел A (проксируется на B) ---
+        let mut client_a = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port_a))
+            .await
+            .unwrap();
+
+        // Формируем SET-команду.
+        let cmd = format!(
+            "*3\r\n$3\r\nSET\r\n${}\r\n{}\r\n${}\r\n{}\r\n",
+            key_to_b.len(),
+            key_to_b,
+            test_value.len(),
+            test_value
+        );
+        client_a.write_all(cmd.as_bytes()).await.unwrap();
+        let mut buf = [0u8; 32];
+        let n = tokio::time::timeout(Duration::from_secs(5), client_a.read(&mut buf))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(&buf[..n], b"+OK\r\n", "SET через прокси должен возвращать +OK");
+        let _ = client_a.shutdown().await;
+
+        // --- Проверка: GET напрямую с B ---
+        let mut client_b = tokio::net::TcpStream::connect(addr_b.clone()).await.unwrap();
+        let cmd = format!(
+            "*2\r\n$3\r\nGET\r\n${}\r\n{}\r\n",
+            key_to_b.len(),
+            key_to_b
+        );
+        client_b.write_all(cmd.as_bytes()).await.unwrap();
+        let n = tokio::time::timeout(Duration::from_secs(5), client_b.read(&mut buf))
+            .await
+            .unwrap()
+            .unwrap();
+
+        let expected = format!("${}\r\n{}\r\n", test_value.len(), test_value);
+        assert_eq!(
+            &buf[..n],
+            expected.as_bytes(),
+            "Значение должно быть доступно на узле B (через прокси)"
+        );
+
+        let _ = client_b.shutdown().await;
         let _ = std::fs::remove_dir_all(&test_dir);
     }
 }

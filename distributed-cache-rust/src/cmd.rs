@@ -24,6 +24,20 @@ impl Command {
     pub fn is_modifying(&self) -> bool {
         matches!(self, Command::Set { .. } | Command::Del(_))
     }
+
+    /// Возвращает ключ для маршрутизации (первый ключ команды).
+    ///
+    /// Для multi-key команд (DEL, EXISTS) возвращается первый ключ;
+    /// остальные должны принадлежать тому же узлу (как в Redis Cluster).
+    pub fn routing_key(&self) -> Option<&[u8]> {
+        match self {
+            Command::Set { key, .. } => Some(key),
+            Command::Get(key) => Some(key),
+            Command::Del(keys) => keys.first().map(|k| k.as_slice()),
+            Command::Exists(keys) => keys.first().map(|k| k.as_slice()),
+            _ => None,
+        }
+    }
 }
 
 /// Попытка преобразовать массив RESP в `Command`.
