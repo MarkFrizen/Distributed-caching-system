@@ -14,6 +14,18 @@
 - **Этап 6** — Контейнеризация и CI/CD ✅
 - **Этап 7** — Кластеризация (consistent hashing, проксирование) ✅
 - **Этап 8** — Репликация master‑slave (SYNC, broadcast, replica) ✅
+- **Этап 9** — Нагрузочное тестирование и анализ производительности ✅
+
+## Документация
+
+| Документ | Описание |
+|----------|----------|
+| [API.md](distributed-cache-rust/docs/API.md) | Полный перечень команд, синтаксис RESP2, коды ошибок |
+| [architecture.md](distributed-cache-rust/docs/architecture.md) | Диаграммы архитектуры, потоки запросов, модули |
+| [clustering.md](distributed-cache-rust/docs/clustering.md) | Consistent hashing, настройка кластера |
+| [replication.md](distributed-cache-rust/docs/replication.md) | Протокол SYNC, master‑slave репликация |
+| [persistence.md](distributed-cache-rust/docs/persistence.md) | RDB-снимки и AOF-лог |
+| [benchmark.md](distributed-cache-rust/docs/benchmark.md) | Результаты нагрузочного тестирования |
 
 ## Стек
 
@@ -233,5 +245,5 @@ set CACHE_ROLE=replica && set CACHE_MASTER=127.0.0.1:8080 && cargo run
 ```bash
 cd distributed-cache-rust
 cargo test
-# Ожидается: 95+ passed, 0 failed
+# Ожидается: 95 passed, 0 failed
 ```

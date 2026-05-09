@@ -14,6 +14,9 @@ Thumbs.db
 *.aof
 /data/
 
+# Data
+*.csv
+
 .gigacode
 .qwen
 */.gigacode
