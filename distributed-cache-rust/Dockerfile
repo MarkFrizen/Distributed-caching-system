@@ -31,7 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /app/target/release/distributed-cache-rust /usr/local/bin/
 
 HEALTHCHECK --interval=5s --timeout=3s --start-period=5s --retries=3 \
-    CMD printf '*1\r\n$4\r\nPING\r\n' | timeout 3 socat - TCP:127.0.0.1:8080 | grep -q '+PONG' || exit 1
+    CMD sh -c 'PORT=${CACHE_BIND#*:} && printf "*1\r\n\$4\r\nPING\r\n" | timeout 3 socat - TCP:127.0.0.1:$PORT | grep -q "+PONG" || exit 1'
 
 # По умолчанию слушаем на всех интерфейсах для Docker.
 ENV CACHE_BIND=0.0.0.0:8080
